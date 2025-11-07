@@ -1,0 +1,10 @@
+{
+  "githubToken": "GH_TOKEN",
+  "organization": "ORGANIZATION_NAME",
+  "repositories": [
+    "repo1",
+    "repo2",
+    "repo3"
+  ]
+}
+
