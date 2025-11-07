@@ -27,20 +27,65 @@ export class GitHubAnalytics {
       const search = data.resources.search;
       
       const resetTime = new Date(core.reset * 1000);
+      const searchResetTime = new Date(search.reset * 1000);
       const now = new Date();
       const minutesUntilReset = Math.ceil((resetTime.getTime() - now.getTime()) / 60000);
+      const searchMinutesUntilReset = Math.ceil((searchResetTime.getTime() - now.getTime()) / 60000);
       
       console.log('\n⚡ GitHub API Rate Limit Status:');
       console.log(`  Core API: ${core.remaining}/${core.limit} requests remaining`);
-      console.log(`  Search API: ${search.remaining}/${search.limit} requests remaining`);
-      
-      if (core.remaining < 100) {
-        console.log(`  ⚠️  Low on requests! Resets in ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
+      if (core.remaining === 0) {
+        console.log(`    ❌ DEPLETED! Resets in ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
+      } else if (core.remaining < 100) {
+        console.log(`    ⚠️  Low! Resets in ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
       } else {
-        console.log(`  ✓ Resets at ${resetTime.toLocaleTimeString()}`);
+        console.log(`    ✓ Resets at ${resetTime.toLocaleTimeString()}`);
+      }
+      
+      console.log(`  Search API: ${search.remaining}/${search.limit} requests remaining`);
+      if (search.remaining === 0) {
+        console.log(`    ❌ DEPLETED! Resets in ${searchMinutesUntilReset} minutes at ${searchResetTime.toLocaleTimeString()}`);
+      } else if (search.remaining < 5) {
+        console.log(`    ⚠️  Low! Resets in ${searchMinutesUntilReset} minutes at ${searchResetTime.toLocaleTimeString()}`);
+      } else {
+        console.log(`    ✓ Resets at ${searchResetTime.toLocaleTimeString()}`);
       }
     } catch (error: any) {
       console.log(`  ⚠️  Could not fetch rate limit: ${error.message}`);
+    }
+  }
+
+  /**
+   * Log detailed rate limit error information
+   */
+  private async logRateLimitError(error: any, context: string): Promise<void> {
+    console.error(`\n❌ Rate Limit Error in ${context}`);
+    
+    try {
+      const { data } = await this.octokit.rateLimit.get();
+      const core = data.resources.core;
+      const search = data.resources.search;
+      
+      // Determine which limit was hit
+      if (core.remaining === 0) {
+        const resetTime = new Date(core.reset * 1000);
+        const minutesUntilReset = Math.ceil((resetTime.getTime() - Date.now()) / 60000);
+        console.error(`   Limit Hit: CORE API (${core.limit} requests/hour)`);
+        console.error(`   Resets in: ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
+      }
+      
+      if (search.remaining === 0) {
+        const resetTime = new Date(search.reset * 1000);
+        const minutesUntilReset = Math.ceil((resetTime.getTime() - Date.now()) / 60000);
+        console.error(`   Limit Hit: SEARCH API (${search.limit} requests/hour)`);
+        console.error(`   Resets in: ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
+      }
+      
+      console.error(`\n   Current Status:`);
+      console.error(`   - Core API: ${core.remaining}/${core.limit}`);
+      console.error(`   - Search API: ${search.remaining}/${search.limit}`);
+    } catch (e) {
+      console.error(`   Could not fetch rate limit details: ${error.message}`);
     }
   }
 
@@ -216,6 +261,9 @@ export class GitHubAnalytics {
       console.log(`✓ Processed ${issues.length} issues`);
       return issues;
     } catch (error: any) {
+      if (error.message && error.message.includes('rate limit')) {
+        await this.logRateLimitError(error, `Fetching issues for ${repo}`);
+      }
       throw new Error(`Failed to fetch issues for ${repo}: ${error.message}`);
     }
   }
@@ -272,6 +320,10 @@ export class GitHubAnalytics {
         type: 'pr',
       };
     } catch (error: any) {
+      if (error.message && error.message.includes('rate limit')) {
+        // Rate limit errors are logged at a higher level
+        throw error;
+      }
       console.error(`Error processing PR #${pr.number}: ${error.message}`);
       return null;
     }
@@ -322,6 +374,9 @@ export class GitHubAnalytics {
       console.log(`✓ Processed ${prs.length} pull requests`);
       return prs;
     } catch (error: any) {
+      if (error.message && error.message.includes('rate limit')) {
+        await this.logRateLimitError(error, `Fetching PRs for ${repo}`);
+      }
       throw new Error(`Failed to fetch PRs for ${repo}: ${error.message}`);
     }
   }
@@ -452,24 +507,23 @@ export class GitHubAnalytics {
 
   /**
    * Fetch all data for configured repositories
-   * Optimized with parallel repository processing
+   * Processes repositories sequentially to avoid Search API rate limits
    */
   async fetchAllData(
     repositories: RepositoryConfig[],
     startDate: Date,
     endDate: Date
   ): Promise<IssueData[]> {
-    // Process all repositories in parallel
-    const results = await Promise.all(
-      repositories.map(async (repoConfig) => {
-        const issues = await this.fetchIssues(repoConfig.name, startDate, endDate);
-        const prs = await this.fetchPullRequests(repoConfig.name, startDate, endDate);
-        return [...issues, ...prs];
-      })
-    );
+    const allData: IssueData[] = [];
 
-    // Flatten results
-    return results.flat();
+    // Process repositories sequentially to avoid overwhelming Search API
+    for (const repoConfig of repositories) {
+      const issues = await this.fetchIssues(repoConfig.name, startDate, endDate);
+      const prs = await this.fetchPullRequests(repoConfig.name, startDate, endDate);
+      allData.push(...issues, ...prs);
+    }
+
+    return allData;
   }
 }
 
