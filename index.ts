@@ -32,14 +32,22 @@ async function main() {
 
     console.log(`✓ Configuration loaded`);
     console.log(`  Organization: ${config.organization}`);
-    console.log(`  Repositories: ${config.repositories.join(', ')}`);
-    console.log(`  Date range: ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}\n`);
+    console.log(`  Repositories: ${config.repositories.map(r => r.name).join(', ')}`);
+    console.log(`  Date range: ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
 
     // Initialize GitHub Analytics
     const analytics = new GitHubAnalytics(config);
 
+    // Check rate limit before starting
+    await analytics.checkRateLimit();
+    console.log('');
+
     // Fetch organization members (cached for entire run)
     await analytics.fetchOrgMembers();
+    console.log('');
+
+    // Fetch team members (each team fetched only once)
+    await analytics.buildRepoTeamCache(config.repositories);
     console.log('');
 
     // Fetch all data
@@ -68,9 +76,19 @@ async function main() {
     const csvPath = await saveCSV(data);
     displaySummary(csvPath);
 
+    // Check rate limit after completion
+    await analytics.checkRateLimit();
+
   } catch (error: any) {
     console.error(`\n❌ Error: ${error.message}`);
-    if (error.stack) {
+    
+    // Check if it's a rate limit error
+    if (error.message.includes('rate limit')) {
+      console.log('\n⚠️  Hit API rate limit. Wait for the reset time and try again.');
+      console.log('   Use a shorter date range or fewer repositories to reduce API calls.');
+    }
+    
+    if (error.stack && !error.message.includes('rate limit')) {
       console.error(error.stack);
     }
     process.exit(1);

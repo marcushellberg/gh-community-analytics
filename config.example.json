@@ -2,9 +2,18 @@
   "githubToken": "GH_TOKEN",
   "organization": "ORGANIZATION_NAME",
   "repositories": [
-    "repo1",
-    "repo2",
-    "repo3"
+    {
+      "name": "repo1",
+      "teams": ["repo1-team", "shared-team"]
+    },
+    {
+      "name": "repo2",
+      "teams": ["repo2-team"]
+    },
+    {
+      "name": "repo3",
+      "teams": ["repo3-team", "shared-team"]
+    }
   ]
 }
 

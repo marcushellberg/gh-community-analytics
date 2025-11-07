@@ -1,16 +1,47 @@
 import { Octokit } from '@octokit/rest';
-import type { Config, IssueData } from './types.ts';
+import type { Config, IssueData, RepositoryConfig } from './types.ts';
 import { calculateWorkingHours, isWithinOneWorkingDay, getWeekStart } from './utils.ts';
 
 export class GitHubAnalytics {
   private octokit: Octokit;
   private organization: string;
   private orgMembers: Set<string>;
+  private teamMembersCache: Map<string, Set<string>>;
+  private repoTeamMembers: Map<string, Set<string>>;
 
   constructor(config: Config) {
     this.octokit = new Octokit({ auth: config.githubToken });
     this.organization = config.organization;
     this.orgMembers = new Set();
+    this.teamMembersCache = new Map();
+    this.repoTeamMembers = new Map();
+  }
+
+  /**
+   * Check and display API rate limit status
+   */
+  async checkRateLimit(): Promise<void> {
+    try {
+      const { data } = await this.octokit.rateLimit.get();
+      const core = data.resources.core;
+      const search = data.resources.search;
+      
+      const resetTime = new Date(core.reset * 1000);
+      const now = new Date();
+      const minutesUntilReset = Math.ceil((resetTime.getTime() - now.getTime()) / 60000);
+      
+      console.log('\n⚡ GitHub API Rate Limit Status:');
+      console.log(`  Core API: ${core.remaining}/${core.limit} requests remaining`);
+      console.log(`  Search API: ${search.remaining}/${search.limit} requests remaining`);
+      
+      if (core.remaining < 100) {
+        console.log(`  ⚠️  Low on requests! Resets in ${minutesUntilReset} minutes at ${resetTime.toLocaleTimeString()}`);
+      } else {
+        console.log(`  ✓ Resets at ${resetTime.toLocaleTimeString()}`);
+      }
+    } catch (error: any) {
+      console.log(`  ⚠️  Could not fetch rate limit: ${error.message}`);
+    }
   }
 
   /**
@@ -43,6 +74,82 @@ export class GitHubAnalytics {
   }
 
   /**
+   * Fetch members of a specific team (cached globally)
+   */
+  private async fetchTeamMembers(teamSlug: string): Promise<Set<string>> {
+    // Return cached if already fetched
+    if (this.teamMembersCache.has(teamSlug)) {
+      return this.teamMembersCache.get(teamSlug)!;
+    }
+
+    try {
+      const members = await this.octokit.paginate(
+        this.octokit.teams.listMembersInOrg,
+        {
+          org: this.organization,
+          team_slug: teamSlug,
+          per_page: 100,
+        }
+      );
+
+      const memberSet = new Set(members.map(member => member.login));
+      this.teamMembersCache.set(teamSlug, memberSet);
+      console.log(`  ✓ Fetched ${memberSet.size} members from ${teamSlug}`);
+      return memberSet;
+    } catch (error: any) {
+      console.warn(`  ⚠️  Failed to fetch team members for ${teamSlug}: ${error.message}`);
+      const emptySet = new Set<string>();
+      this.teamMembersCache.set(teamSlug, emptySet);
+      return emptySet;
+    }
+  }
+
+  /**
+   * Build team member cache for all repositories
+   */
+  async buildRepoTeamCache(repositories: RepositoryConfig[]): Promise<void> {
+    console.log('Fetching team members...\n');
+
+    // Collect all unique team slugs
+    const allTeams = new Set<string>();
+    repositories.forEach(repo => {
+      repo.teams.forEach(team => allTeams.add(team));
+    });
+
+    console.log(`Found ${allTeams.size} unique team(s) across all repositories`);
+
+    // Fetch each unique team once
+    for (const teamSlug of allTeams) {
+      await this.fetchTeamMembers(teamSlug);
+    }
+
+    console.log('');
+
+    // Build per-repo team member sets
+    for (const repo of repositories) {
+      const allMembers = new Set<string>();
+      
+      for (const teamSlug of repo.teams) {
+        const teamMembers = this.teamMembersCache.get(teamSlug);
+        if (teamMembers) {
+          teamMembers.forEach(member => allMembers.add(member));
+        }
+      }
+
+      this.repoTeamMembers.set(repo.name, allMembers);
+      console.log(`✓ ${repo.name}: ${allMembers.size} team member(s) from ${repo.teams.length} team(s)`);
+    }
+  }
+
+  /**
+   * Check if a user is a member of a specific repository's team
+   */
+  isRepoTeamMember(repo: string, username: string): boolean {
+    const teamMembers = this.repoTeamMembers.get(repo);
+    return teamMembers ? teamMembers.has(username) : false;
+  }
+
+  /**
    * Fetch issues for a repository within a date range
    */
   async fetchIssues(
@@ -55,7 +162,7 @@ export class GitHubAnalytics {
     const issues: IssueData[] = [];
 
     try {
-      // Use search API for efficient date-range filtering
+      // Use Search API for accurate date-range filtering
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
       const query = `repo:${this.organization}/${repo} is:issue created:${startDateStr}..${endDateStr}`;
@@ -74,8 +181,8 @@ export class GitHubAnalytics {
 
         const createdAt = new Date(issue.created_at);
 
-        // Skip issues created by org members
-        if (this.isOrgMember(issue.user?.login || '')) continue;
+        // Skip issues created by repo team members
+        if (this.isRepoTeamMember(repo, issue.user?.login || '')) continue;
 
         const firstResponse = await this.findFirstOrgResponse(
           repo,
@@ -114,7 +221,65 @@ export class GitHubAnalytics {
   }
 
   /**
+   * Process a single pull request
+   */
+  private async processPullRequest(
+    repo: string,
+    pr: any
+  ): Promise<IssueData | null> {
+    try {
+      const createdAt = new Date(pr.created_at);
+
+      // Skip PRs created by repo team members
+      if (this.isRepoTeamMember(repo, pr.user?.login || '')) return null;
+
+      // Only fetch full PR details if the PR is closed (potentially merged)
+      let prDetails = null;
+      if (pr.state === 'closed') {
+        prDetails = await this.octokit.pulls.get({
+          owner: this.organization,
+          repo: repo,
+          pull_number: pr.number,
+        });
+      }
+
+      const firstResponse = await this.findFirstOrgResponse(
+        repo,
+        pr.number,
+        'pr',
+        prDetails?.data
+      );
+
+      const responseTimeHours = firstResponse
+        ? calculateWorkingHours(createdAt, firstResponse.respondedAt)
+        : null;
+
+      const respondedWithinOneDay = firstResponse
+        ? isWithinOneWorkingDay(createdAt, firstResponse.respondedAt)
+        : false;
+
+      return {
+        repository: repo,
+        number: pr.number,
+        title: pr.title,
+        createdAt,
+        firstResponseAt: firstResponse?.respondedAt || null,
+        responseTimeHours,
+        respondedBy: firstResponse?.respondedBy || null,
+        respondedWithinOneDay,
+        weekStarting: getWeekStart(createdAt),
+        url: pr.html_url,
+        type: 'pr',
+      };
+    } catch (error: any) {
+      console.error(`Error processing PR #${pr.number}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Fetch pull requests for a repository within a date range
+   * Optimized with parallel processing in batches
    */
   async fetchPullRequests(
     repo: string,
@@ -123,10 +288,8 @@ export class GitHubAnalytics {
   ): Promise<IssueData[]> {
     console.log(`Fetching pull requests for ${this.organization}/${repo}...`);
     
-    const prs: IssueData[] = [];
-
     try {
-      // Use search API for efficient date-range filtering
+      // Use Search API for accurate date-range filtering
       const startDateStr = startDate.toISOString().split('T')[0];
       const endDateStr = endDate.toISOString().split('T')[0];
       const query = `repo:${this.organization}/${repo} is:pr created:${startDateStr}..${endDateStr}`;
@@ -139,50 +302,21 @@ export class GitHubAnalytics {
         }
       );
 
-      for (const pr of searchResults) {
-        // Only process pull requests
-        if (!pr.pull_request) continue;
+      // Filter to only pull requests
+      const pullRequests = searchResults.filter(item => item.pull_request);
 
-        const createdAt = new Date(pr.created_at);
+      // Process PRs in parallel batches
+      const BATCH_SIZE = 10;
+      const prs: IssueData[] = [];
 
-        // Skip PRs created by org members
-        if (this.isOrgMember(pr.user?.login || '')) continue;
-
-        // Get full PR details to check merge status
-        const prDetails = await this.octokit.pulls.get({
-          owner: this.organization,
-          repo: repo,
-          pull_number: pr.number,
-        });
-
-        const firstResponse = await this.findFirstOrgResponse(
-          repo,
-          pr.number,
-          'pr',
-          prDetails.data
+      for (let i = 0; i < pullRequests.length; i += BATCH_SIZE) {
+        const batch = pullRequests.slice(i, i + BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map(pr => this.processPullRequest(repo, pr))
         );
-
-        const responseTimeHours = firstResponse
-          ? calculateWorkingHours(createdAt, firstResponse.respondedAt)
-          : null;
-
-        const respondedWithinOneDay = firstResponse
-          ? isWithinOneWorkingDay(createdAt, firstResponse.respondedAt)
-          : false;
-
-        prs.push({
-          repository: repo,
-          number: pr.number,
-          title: pr.title,
-          createdAt,
-          firstResponseAt: firstResponse?.respondedAt || null,
-          responseTimeHours,
-          respondedBy: firstResponse?.respondedBy || null,
-          respondedWithinOneDay,
-          weekStarting: getWeekStart(createdAt),
-          url: pr.html_url,
-          type: 'pr',
-        });
+        
+        // Filter out nulls (filtered PRs) and add to results
+        prs.push(...results.filter((pr): pr is IssueData => pr !== null));
       }
 
       console.log(`✓ Processed ${prs.length} pull requests`);
@@ -318,21 +452,24 @@ export class GitHubAnalytics {
 
   /**
    * Fetch all data for configured repositories
+   * Optimized with parallel repository processing
    */
   async fetchAllData(
-    repositories: string[],
+    repositories: RepositoryConfig[],
     startDate: Date,
     endDate: Date
   ): Promise<IssueData[]> {
-    const allData: IssueData[] = [];
+    // Process all repositories in parallel
+    const results = await Promise.all(
+      repositories.map(async (repoConfig) => {
+        const issues = await this.fetchIssues(repoConfig.name, startDate, endDate);
+        const prs = await this.fetchPullRequests(repoConfig.name, startDate, endDate);
+        return [...issues, ...prs];
+      })
+    );
 
-    for (const repo of repositories) {
-      const issues = await this.fetchIssues(repo, startDate, endDate);
-      const prs = await this.fetchPullRequests(repo, startDate, endDate);
-      allData.push(...issues, ...prs);
-    }
-
-    return allData;
+    // Flatten results
+    return results.flat();
   }
 }
 
