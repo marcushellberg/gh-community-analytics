@@ -225,9 +225,13 @@ export class GitHubAnalytics {
         if (issue.pull_request) continue;
 
         const createdAt = new Date(issue.created_at);
+        const author = issue.user?.login || '';
 
         // Skip issues created by repo team members
-        if (this.isRepoTeamMember(repo, issue.user?.login || '')) continue;
+        if (this.isRepoTeamMember(repo, author)) continue;
+
+        // Skip issues created by bots
+        if (author === 'vaadin-bot' || author === 'dependabot[bot]') continue;
 
         const firstResponse = await this.findFirstOrgResponse(
           repo,
@@ -251,6 +255,7 @@ export class GitHubAnalytics {
           firstResponseAt: firstResponse?.respondedAt || null,
           responseTimeHours,
           respondedBy: firstResponse?.respondedBy || null,
+          reportedBy: issue.user?.login || null,
           respondedWithinOneDay,
           weekStarting: getWeekStart(createdAt),
           url: issue.html_url,
@@ -277,9 +282,13 @@ export class GitHubAnalytics {
   ): Promise<IssueData | null> {
     try {
       const createdAt = new Date(pr.created_at);
+      const author = pr.user?.login || '';
 
       // Skip PRs created by repo team members
-      if (this.isRepoTeamMember(repo, pr.user?.login || '')) return null;
+      if (this.isRepoTeamMember(repo, author)) return null;
+
+      // Skip PRs created by bots
+      if (author === 'vaadin-bot' || author === 'dependabot[bot]') return null;
 
       // Only fetch full PR details if the PR is closed (potentially merged)
       let prDetails = null;
@@ -314,6 +323,7 @@ export class GitHubAnalytics {
         firstResponseAt: firstResponse?.respondedAt || null,
         responseTimeHours,
         respondedBy: firstResponse?.respondedBy || null,
+        reportedBy: pr.user?.login || null,
         respondedWithinOneDay,
         weekStarting: getWeekStart(createdAt),
         url: pr.html_url,

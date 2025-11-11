@@ -17,6 +17,7 @@ export interface IssueData {
   firstResponseAt: Date | null;
   responseTimeHours: number | null;
   respondedBy: string | null;
+  reportedBy: string | null;
   respondedWithinOneDay: boolean;
   weekStarting: Date;
   url: string;
