@@ -30,9 +30,15 @@ async function main() {
       process.exit(1);
     }
 
+    // Set default values
+    const excludeTeams = config.excludeTeams || [];
+    const excludeBots = config.excludeBots || [];
+
     console.log(`✓ Configuration loaded`);
     console.log(`  Organization: ${config.organization}`);
-    console.log(`  Repositories: ${config.repositories.map(r => r.name).join(', ')}`);
+    console.log(`  Repositories: ${config.repositories.join(', ')}`);
+    console.log(`  Exclude Teams: ${excludeTeams.length > 0 ? excludeTeams.join(', ') : 'none'}`);
+    console.log(`  Exclude Bots: ${excludeBots.length > 0 ? excludeBots.join(', ') : 'none'}`);
     console.log(`  Date range: ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
 
     // Initialize GitHub Analytics
@@ -46,9 +52,8 @@ async function main() {
     await analytics.fetchOrgMembers();
     console.log('');
 
-    // Fetch team members (each team fetched only once)
-    await analytics.buildRepoTeamCache(config.repositories);
-    console.log('');
+    // Build exclude list from teams and bots
+    await analytics.buildExcludeList(excludeTeams, excludeBots);
 
     // Fetch all data
     console.log('Fetching issues and pull requests...\n');
@@ -104,7 +109,7 @@ Usage:
   bun run index.ts [options]
 
 Options:
-  --start-date YYYY-MM-DD    Start date for analysis (default: 90 days ago)
+  --start-date YYYY-MM-DD    Start date for analysis (default: 4 full weeks + current week)
   --end-date YYYY-MM-DD      End date for analysis (default: today)
   --config PATH              Path to config file (default: ./config.json)
   --help, -h                 Show this help message
@@ -119,7 +124,9 @@ Configuration:
   {
     "githubToken": "your_github_token",
     "organization": "your-org-name",
-    "repositories": ["repo1", "repo2"]
+    "repositories": ["repo1", "repo2"],
+    "excludeTeams": ["team1", "team2"],
+    "excludeBots": ["bot-user-1", "bot-user-2"]
   }
 
   Get a GitHub token from: https://github.com/settings/tokens

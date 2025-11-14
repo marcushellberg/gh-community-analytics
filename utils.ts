@@ -67,8 +67,11 @@ export function parseArgs(): {
   const endDate = new Date();
   endDate.setHours(23, 59, 59, 999);
   
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - 90);
+  // Default to 4 full weeks + current week
+  // Start from 4 weeks before the beginning of the current week
+  const currentWeekStart = getWeekStart(new Date());
+  const startDate = new Date(currentWeekStart);
+  startDate.setDate(startDate.getDate() - (7 * 4)); // Go back 4 weeks
   startDate.setHours(0, 0, 0, 0);
   
   let configPath = './config.json';

@@ -42,8 +42,7 @@ export function generateCSV(data: IssueData[]): string {
  * Save CSV to file
  */
 export async function saveCSV(data: IssueData[], filename?: string): Promise<string> {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
-  const filepath = filename || `response-times-${timestamp}.csv`;
+  const filepath = filename || 'response-times.csv';
   
   const csvContent = generateCSV(data);
   await Bun.write(filepath, csvContent);

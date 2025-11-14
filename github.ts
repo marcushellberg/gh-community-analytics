@@ -1,20 +1,18 @@
 import { Octokit } from '@octokit/rest';
-import type { Config, IssueData, RepositoryConfig } from './types.ts';
+import type { Config, IssueData } from './types.ts';
 import { calculateWorkingHours, isWithinOneWorkingDay, getWeekStart } from './utils.ts';
 
 export class GitHubAnalytics {
   private octokit: Octokit;
   private organization: string;
   private orgMembers: Set<string>;
-  private teamMembersCache: Map<string, Set<string>>;
-  private repoTeamMembers: Map<string, Set<string>>;
+  private excludedUsers: Set<string>;
 
   constructor(config: Config) {
     this.octokit = new Octokit({ auth: config.githubToken });
     this.organization = config.organization;
     this.orgMembers = new Set();
-    this.teamMembersCache = new Map();
-    this.repoTeamMembers = new Map();
+    this.excludedUsers = new Set();
   }
 
   /**
@@ -119,79 +117,52 @@ export class GitHubAnalytics {
   }
 
   /**
-   * Fetch members of a specific team (cached globally)
+   * Build unified exclude list from teams and bots
    */
-  private async fetchTeamMembers(teamSlug: string): Promise<Set<string>> {
-    // Return cached if already fetched
-    if (this.teamMembersCache.has(teamSlug)) {
-      return this.teamMembersCache.get(teamSlug)!;
+  async buildExcludeList(excludeTeams: string[], excludeBots: string[] = []): Promise<void> {
+    console.log('Building exclude list...\n');
+
+    // Add bots to exclude list first
+    excludeBots.forEach(bot => this.excludedUsers.add(bot));
+
+    if (excludeTeams.length === 0) {
+      console.log('✓ No teams to exclude');
+      console.log(`✓ Total excluded users: ${this.excludedUsers.size} (${excludeBots.length} bots)\n`);
+      return;
     }
 
-    try {
-      const members = await this.octokit.paginate(
-        this.octokit.teams.listMembersInOrg,
-        {
-          org: this.organization,
-          team_slug: teamSlug,
-          per_page: 100,
-        }
-      );
+    console.log(`Fetching members from ${excludeTeams.length} team(s)...`);
 
-      const memberSet = new Set(members.map(member => member.login));
-      this.teamMembersCache.set(teamSlug, memberSet);
-      console.log(`  ✓ Fetched ${memberSet.size} members from ${teamSlug}`);
-      return memberSet;
-    } catch (error: any) {
-      console.warn(`  ⚠️  Failed to fetch team members for ${teamSlug}: ${error.message}`);
-      const emptySet = new Set<string>();
-      this.teamMembersCache.set(teamSlug, emptySet);
-      return emptySet;
-    }
-  }
+    // Fetch members from each team
+    for (const teamSlug of excludeTeams) {
+      try {
+        const members = await this.octokit.paginate(
+          this.octokit.teams.listMembersInOrg,
+          {
+            org: this.organization,
+            team_slug: teamSlug,
+            per_page: 100,
+          }
+        );
 
-  /**
-   * Build team member cache for all repositories
-   */
-  async buildRepoTeamCache(repositories: RepositoryConfig[]): Promise<void> {
-    console.log('Fetching team members...\n');
-
-    // Collect all unique team slugs
-    const allTeams = new Set<string>();
-    repositories.forEach(repo => {
-      repo.teams.forEach(team => allTeams.add(team));
-    });
-
-    console.log(`Found ${allTeams.size} unique team(s) across all repositories`);
-
-    // Fetch each unique team once
-    for (const teamSlug of allTeams) {
-      await this.fetchTeamMembers(teamSlug);
-    }
-
-    console.log('');
-
-    // Build per-repo team member sets
-    for (const repo of repositories) {
-      const allMembers = new Set<string>();
-      
-      for (const teamSlug of repo.teams) {
-        const teamMembers = this.teamMembersCache.get(teamSlug);
-        if (teamMembers) {
-          teamMembers.forEach(member => allMembers.add(member));
-        }
+        const beforeCount = this.excludedUsers.size;
+        members.forEach(member => this.excludedUsers.add(member.login));
+        const addedCount = this.excludedUsers.size - beforeCount;
+        
+        console.log(`  ✓ ${teamSlug}: ${members.length} members (${addedCount} unique)`);
+      } catch (error: any) {
+        console.warn(`  ⚠️  Failed to fetch team members for ${teamSlug}: ${error.message}`);
       }
-
-      this.repoTeamMembers.set(repo.name, allMembers);
-      console.log(`✓ ${repo.name}: ${allMembers.size} team member(s) from ${repo.teams.length} team(s)`);
     }
+
+    console.log(`\n✓ Total excluded users: ${this.excludedUsers.size} (${excludeBots.length} bots + ${this.excludedUsers.size - excludeBots.length} team members)\n`);
   }
 
   /**
-   * Check if a user is a member of a specific repository's team
+   * Check if a user should be excluded
    */
-  isRepoTeamMember(repo: string, username: string): boolean {
-    const teamMembers = this.repoTeamMembers.get(repo);
-    return teamMembers ? teamMembers.has(username) : false;
+  isExcludedUser(username: string): boolean {
+    return this.excludedUsers.has(username);
   }
 
   /**
@@ -227,11 +198,8 @@ export class GitHubAnalytics {
         const createdAt = new Date(issue.created_at);
         const author = issue.user?.login || '';
 
-        // Skip issues created by repo team members
-        if (this.isRepoTeamMember(repo, author)) continue;
-
-        // Skip issues created by bots
-        if (author === 'vaadin-bot' || author === 'dependabot[bot]') continue;
+        // Skip issues created by excluded users (team members + bots)
+        if (this.isExcludedUser(author)) continue;
 
         const firstResponse = await this.findFirstOrgResponse(
           repo,
@@ -284,11 +252,8 @@ export class GitHubAnalytics {
       const createdAt = new Date(pr.created_at);
       const author = pr.user?.login || '';
 
-      // Skip PRs created by repo team members
-      if (this.isRepoTeamMember(repo, author)) return null;
-
-      // Skip PRs created by bots
-      if (author === 'vaadin-bot' || author === 'dependabot[bot]') return null;
+      // Skip PRs created by excluded users (team members + bots)
+      if (this.isExcludedUser(author)) return null;
 
       // Only fetch full PR details if the PR is closed (potentially merged)
       let prDetails = null;
@@ -520,16 +485,16 @@ export class GitHubAnalytics {
    * Processes repositories sequentially to avoid Search API rate limits
    */
   async fetchAllData(
-    repositories: RepositoryConfig[],
+    repositories: string[],
     startDate: Date,
     endDate: Date
   ): Promise<IssueData[]> {
     const allData: IssueData[] = [];
 
     // Process repositories sequentially to avoid overwhelming Search API
-    for (const repoConfig of repositories) {
-      const issues = await this.fetchIssues(repoConfig.name, startDate, endDate);
-      const prs = await this.fetchPullRequests(repoConfig.name, startDate, endDate);
+    for (const repo of repositories) {
+      const issues = await this.fetchIssues(repo, startDate, endDate);
+      const prs = await this.fetchPullRequests(repo, startDate, endDate);
       allData.push(...issues, ...prs);
     }
 

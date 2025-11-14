@@ -1,12 +1,9 @@
-export interface RepositoryConfig {
-  name: string;
-  teams: string[];
-}
-
 export interface Config {
   githubToken: string;
   organization: string;
-  repositories: RepositoryConfig[];
+  repositories: string[];
+  excludeTeams: string[];
+  excludeBots?: string[];
 }
 
 export interface IssueData {
