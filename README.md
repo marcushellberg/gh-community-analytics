@@ -8,8 +8,8 @@ A Bun-powered script to analyze and track response times from your organization'
 - ⏱️  Calculate working hours (excluding weekends)
 - 📈 Identify issues/PRs responded within one business day
 - 📅 Weekly breakdown of response metrics
+- 👥 Exclude specific teams or bot accounts from analysis
 - 📄 Export detailed data to CSV
-- 🎨 Beautiful console output with statistics
 
 ## Requirements
 
@@ -37,9 +37,13 @@ cp config.example.json config.json
 {
   "githubToken": "your_github_token_here",
   "organization": "your-organization-name",
-  "repositories": ["repo1", "repo2", "repo3"]
+  "repositories": ["repo1", "repo2", "repo3"],
+  "excludeTeams": ["team1", "team2"],
+  "excludeBots": ["bot-user-1", "bot-user-2"]
 }
 ```
+
+Note: `excludeTeams` and `excludeBots` are optional. Use empty arrays `[]` if you don't need to exclude anyone.
 
 ## Getting a GitHub Token
 
@@ -55,7 +59,7 @@ cp config.example.json config.json
 
 ### Basic Usage
 
-Run with default settings (last 90 days):
+Run with default settings (4 full weeks + current week):
 
 ```bash
 bun run index.ts
@@ -106,7 +110,7 @@ Displays comprehensive metrics including:
 
 ### 2. CSV Export
 
-Creates a CSV file named `response-times-YYYY-MM-DD.csv` with detailed information:
+Creates a CSV file named `response-times.csv` with detailed information:
 - Repository name
 - Issue/PR type and number
 - Title
@@ -114,6 +118,7 @@ Creates a CSV file named `response-times-YYYY-MM-DD.csv` with detailed informati
 - First response timestamp
 - Response time in hours
 - Who responded
+- Who reported/created the issue/PR
 - Whether responded within 1 business day
 - Week starting date
 - URL to the issue/PR
@@ -122,13 +127,15 @@ Creates a CSV file named `response-times-YYYY-MM-DD.csv` with detailed informati
 
 1. **Organization Member Caching**: The script fetches all organization members once at startup and caches them for efficient lookup.
 
-2. **Issue/PR Filtering**: Only analyzes issues and PRs created by non-organization members (community contributions).
+2. **Team & Bot Exclusion**: Optionally excludes members from specified teams or bot accounts from being counted as responders.
 
-3. **Response Detection**: Checks all comments, review comments, and reviews to find the first response from an organization member.
+3. **Issue/PR Filtering**: Only analyzes issues and PRs created by non-organization members (community contributions).
 
-4. **Working Hours Calculation**: Excludes weekends when calculating response times, providing accurate business-day metrics.
+4. **Response Detection**: Checks all comments, review comments, and reviews to find the first response from an organization member (excluding any users in the exclude list).
 
-5. **Weekly Aggregation**: Groups results by week (Monday-Sunday) for trend analysis.
+5. **Working Hours Calculation**: Excludes weekends when calculating response times, providing accurate business-day metrics.
+
+6. **Weekly Aggregation**: Groups results by week (Monday-Sunday) for trend analysis.
 
 ## Configuration
 
@@ -141,15 +148,28 @@ Creates a CSV file named `response-times-YYYY-MM-DD.csv` with detailed informati
   "repositories": [
     "repo1",
     "repo2"
+  ],
+  "excludeTeams": [
+    "team-to-exclude"
+  ],
+  "excludeBots": [
+    "bot-username"
   ]
 }
 ```
+
+**Configuration Fields:**
+- `githubToken` (required): Your GitHub personal access token
+- `organization` (required): The GitHub organization name
+- `repositories` (required): Array of repository names to analyze
+- `excludeTeams` (optional): Array of team slugs whose members should be excluded from response counting
+- `excludeBots` (optional): Array of bot usernames to exclude from response counting
 
 ### CLI Arguments
 
 | Argument | Description | Default |
 |----------|-------------|---------|
-| `--start-date` | Start date (YYYY-MM-DD) | 90 days ago |
+| `--start-date` | Start date (YYYY-MM-DD) | 4 full weeks + current week |
 | `--end-date` | End date (YYYY-MM-DD) | Today |
 | `--config` | Path to config file | `./config.json` |
 | `--help` or `-h` | Show help message | - |
@@ -194,7 +214,7 @@ Week Starting       | Total | Within 1 Day | Percentage
 ================================================================================
 
 ✅ Analysis complete!
-📄 CSV report saved to: response-times-2024-03-31.csv
+📄 CSV report saved to: response-times.csv
 ```
 
 ## Troubleshooting
