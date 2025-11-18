@@ -65,18 +65,25 @@ export function parseArgs(): {
 } {
   const args = process.argv.slice(2);
   
-  // Default end date is end of the previous day (yesterday)
-  // This ensures when running on Monday, we only include complete data through Sunday
-  const endDate = new Date();
-  endDate.setDate(endDate.getDate() - 1); // Go back 1 day
-  endDate.setHours(23, 59, 59, 999); // End of that day
+  // Default end date is the end of the previous Sunday
+  // When running on Tuesday, this ensures we have complete data for the full previous week
+  // including issues filed on Sunday, and excludes the current partial week (Monday + today)
+  const today = new Date();
+  const dayOfWeek = today.getDay(); // 0 = Sunday, 1 = Monday, 2 = Tuesday, etc.
   
-  // Default to 4 full weeks
-  // Start from 4 weeks before the beginning of the week that just ended
-  const lastWeekEnd = new Date(endDate);
-  const lastWeekStart = getWeekStart(lastWeekEnd);
+  // Calculate days to go back to reach the previous Sunday
+  // If today is Monday (1), go back 1 day; if Tuesday (2), go back 2 days, etc.
+  // If today is Sunday (0), go back 0 days (use today as the end)
+  const daysToLastSunday = dayOfWeek === 0 ? 0 : dayOfWeek;
+  
+  const endDate = new Date(today);
+  endDate.setDate(endDate.getDate() - daysToLastSunday);
+  endDate.setHours(23, 59, 59, 999); // End of Sunday
+  
+  // Start date is 4 complete weeks before (28 days), starting from Monday
+  const lastWeekStart = getWeekStart(endDate);
   const startDate = new Date(lastWeekStart);
-  startDate.setDate(startDate.getDate() - (7 * 4)); // Go back 4 weeks
+  startDate.setDate(startDate.getDate() - (7 * 3)); // Go back 3 more weeks (4 weeks total)
   startDate.setHours(0, 0, 0, 0);
   
   let configPath = './config.json';

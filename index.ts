@@ -141,8 +141,8 @@ Usage:
   bun run index.ts [options]
 
 Options:
-  --start-date YYYY-MM-DD    Start date for analysis (default: 4 full weeks + current week)
-  --end-date YYYY-MM-DD      End date for analysis (default: today)
+  --start-date YYYY-MM-DD    Start date for analysis (default: 4 complete weeks ending last Sunday)
+  --end-date YYYY-MM-DD      End date for analysis (default: last Sunday)
   --config PATH              Path to config file (default: ./config.json)
   --help, -h                 Show this help message
 
