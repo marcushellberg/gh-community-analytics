@@ -64,13 +64,18 @@ export function parseArgs(): {
   configPath: string;
 } {
   const args = process.argv.slice(2);
-  const endDate = new Date();
-  endDate.setHours(23, 59, 59, 999);
   
-  // Default to 4 full weeks + current week
-  // Start from 4 weeks before the beginning of the current week
-  const currentWeekStart = getWeekStart(new Date());
-  const startDate = new Date(currentWeekStart);
+  // Default end date is end of the previous day (yesterday)
+  // This ensures when running on Monday, we only include complete data through Sunday
+  const endDate = new Date();
+  endDate.setDate(endDate.getDate() - 1); // Go back 1 day
+  endDate.setHours(23, 59, 59, 999); // End of that day
+  
+  // Default to 4 full weeks
+  // Start from 4 weeks before the beginning of the week that just ended
+  const lastWeekEnd = new Date(endDate);
+  const lastWeekStart = getWeekStart(lastWeekEnd);
+  const startDate = new Date(lastWeekStart);
   startDate.setDate(startDate.getDate() - (7 * 4)); // Go back 4 weeks
   startDate.setHours(0, 0, 0, 0);
   

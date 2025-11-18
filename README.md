@@ -10,6 +10,7 @@ A Bun-powered script to analyze and track response times from your organization'
 - 📅 Weekly breakdown of response metrics
 - 👥 Exclude specific teams or bot accounts from analysis
 - 📄 Export detailed data to CSV
+- 📤 Automated Slack reporting via GitHub Actions
 
 ## Requirements
 
@@ -25,23 +26,18 @@ A Bun-powered script to analyze and track response times from your organization'
 bun install
 ```
 
-3. Create your configuration file:
-
-```bash
-cp config.example.json config.json
-```
-
-4. Edit `config.json` with your settings:
+3. Create your configuration file `config.json` with your settings:
 
 ```json
 {
-  "githubToken": "your_github_token_here",
   "organization": "your-organization-name",
   "repositories": ["repo1", "repo2", "repo3"],
   "excludeTeams": ["team1", "team2"],
   "excludeBots": ["bot-user-1", "bot-user-2"]
 }
 ```
+
+The GitHub token should be provided via the `GH_TOKEN` environment variable.
 
 Note: `excludeTeams` and `excludeBots` are optional. Use empty arrays `[]` if you don't need to exclude anyone.
 
@@ -53,16 +49,16 @@ Note: `excludeTeams` and `excludeBots` are optional. Use empty arrays `[]` if yo
 4. Select the following scopes:
    - `repo` (Full control of private repositories)
    - `read:org` (Read org and team membership)
-5. Generate and copy the token to your `config.json`
+5. Generate and use it as the `GH_TOKEN` environment variable
 
 ## Usage
 
 ### Basic Usage
 
-Run with default settings (4 full weeks + current week):
+Run with default settings (4 full weeks):
 
 ```bash
-bun run index.ts
+GH_TOKEN="your_github_token_here" bun run index.ts
 ```
 
 ### Custom Date Range
@@ -70,7 +66,7 @@ bun run index.ts
 Specify start and end dates:
 
 ```bash
-bun run index.ts --start-date 2024-01-01 --end-date 2024-03-31
+GH_TOKEN="your_github_token_here" bun run index.ts --start-date 2024-01-01 --end-date 2024-03-31
 ```
 
 ### Custom Config File
@@ -78,13 +74,13 @@ bun run index.ts --start-date 2024-01-01 --end-date 2024-03-31
 Use a different configuration file:
 
 ```bash
-bun run index.ts --config /path/to/custom-config.json
+GH_TOKEN="your_github_token_here" bun run index.ts --config /path/to/custom-config.json
 ```
 
 ### Combined Options
 
 ```bash
-bun run index.ts --start-date 2024-01-01 --end-date 2024-12-31 --config ./prod-config.json
+GH_TOKEN="your_github_token_here" bun run index.ts --start-date 2024-01-01 --end-date 2024-12-31 --config ./prod-config.json
 ```
 
 ### Help
@@ -143,7 +139,6 @@ Creates a CSV file named `response-times.csv` with detailed information:
 
 ```json
 {
-  "githubToken": "ghp_xxxxxxxxxxxx",
   "organization": "your-org",
   "repositories": [
     "repo1",
@@ -159,11 +154,12 @@ Creates a CSV file named `response-times.csv` with detailed information:
 ```
 
 **Configuration Fields:**
-- `githubToken` (required): Your GitHub personal access token
 - `organization` (required): The GitHub organization name
 - `repositories` (required): Array of repository names to analyze
 - `excludeTeams` (optional): Array of team slugs whose members should be excluded from response counting
 - `excludeBots` (optional): Array of bot usernames to exclude from response counting
+
+**Note:** The GitHub token is provided via the `GH_TOKEN` environment variable, not in the config file.
 
 ### CLI Arguments
 
@@ -217,6 +213,132 @@ Week Starting       | Total | Within 1 Day | Percentage
 📄 CSV report saved to: response-times.csv
 ```
 
+## Slack Integration
+
+### Setting Up Slack Webhook
+
+To enable Slack notifications, you'll need to create a Slack webhook:
+
+1. Go to [Slack API](https://api.slack.com/apps)
+2. Click "Create New App" and choose "From scratch"
+3. Give it a name and select your workspace
+4. In the left sidebar, click "Incoming Webhooks"
+5. Toggle "Activate Incoming Webhooks" to On
+6. Click "Add New Webhook to Workspace"
+7. Select the channel where you want reports posted
+8. Copy the webhook URL
+
+### Using Slack with CLI
+
+Set the `SLACK_WEBHOOK_URL` and `GH_TOKEN` environment variables to automatically post reports to Slack:
+
+```bash
+# Post weekly summary only (default)
+GH_TOKEN="your_github_token" \
+SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+bun run index.ts
+
+# Post full report (includes overall metrics and weekly summary)
+GH_TOKEN="your_github_token" \
+SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+SLACK_POST_FULL_REPORT=true \
+bun run index.ts
+```
+
+### GitHub Actions Setup
+
+The project includes a GitHub Action that automatically posts reports to Slack.
+
+
+#### 1. Add GitHub Secrets
+
+Go to your repository Settings → Secrets and variables → Actions, and add:
+
+- `SLACK_WEBHOOK_URL` (required): Your Slack webhook URL
+- `GH_TOKEN` (required): GitHub Personal Access Token with `repo` and `read:org` permissions
+
+
+#### 2. Configure the Workflow
+
+The workflow is located at `.github/workflows/slack-report.yml` and runs:
+
+- **Automatically**: Every Monday at 9 AM UTC
+  - Reports data through end of Sunday (23:59:59 the previous day)
+  - Covers 4 complete weeks of data
+  - No partial Monday data is included
+- **Manually**: Through the GitHub Actions UI with custom date ranges
+
+To run manually:
+1. Go to your repository on GitHub
+2. Click the "Actions" tab
+3. Select "Weekly Slack Report" from the workflows list
+4. Click "Run workflow"
+5. Optionally specify:
+   - Start date (YYYY-MM-DD)
+   - End date (YYYY-MM-DD)
+   - Whether to post the full report
+
+#### 3. Customize Schedule
+
+To change when the report runs, edit the cron schedule in `.github/workflows/slack-report.yml`:
+
+```yaml
+schedule:
+  # Run every Monday at 9 AM UTC
+  - cron: '0 9 * * 1'
+```
+
+Common cron patterns:
+- `0 9 * * 1` - Every Monday at 9 AM
+- `0 9 * * 5` - Every Friday at 9 AM
+- `0 9 1 * *` - First day of every month at 9 AM
+- `0 9 * * 1-5` - Every weekday at 9 AM
+
+### Slack Output Format
+
+The report posted to Slack matches the console output format:
+
+```
+📅 WEEKLY SUMMARY - Issues/PRs Responded Within 1 Business Day
+
+Week Starting       | Total | Within 1 Day | Percentage
+------------------------------------------------------------
+2025-10-12         |    20 |           13 |      65.0%
+2025-10-19         |    23 |           13 |      56.5%
+2025-10-26         |    35 |           25 |      71.4%
+2025-11-02         |    23 |           15 |      65.2%
+2025-11-09         |    17 |           10 |      58.8%
+============================================================
+```
+
+If `SLACK_POST_FULL_REPORT=true`, it also includes overall metrics and response time statistics.
+
+**Note about timing:** When the action runs on Monday at 9 AM UTC, it reports data through the end of Sunday (the previous day). This means:
+- The report covers 4 complete weeks of data
+- No partial Monday data is included
+- You see clean weekly statistics without incomplete days
+
+### Testing Slack Integration Locally
+
+Before setting up the GitHub Action, test the Slack integration locally:
+
+```bash
+# 1. Get your Slack webhook URL (see "Setting Up Slack Webhook" above)
+
+# 2. Test with just the weekly summary
+GH_TOKEN="your_github_token" \
+SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+bun run index.ts --start-date 2024-01-01 --end-date 2024-01-31
+
+# 3. Test with the full report
+GH_TOKEN="your_github_token" \
+SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+SLACK_POST_FULL_REPORT=true \
+bun run index.ts --start-date 2024-01-01 --end-date 2024-01-31
+```
+
+The script will run normally and display output to the console, then post the report to Slack at the end.
+
 ## Troubleshooting
 
 ### "Configuration file not found"
@@ -235,28 +357,47 @@ Make sure you've created a `config.json` file based on `config.example.json`.
 ### Rate Limiting
 GitHub API has rate limits (5000 requests/hour for authenticated requests). For large repositories with many issues/PRs, you might hit these limits. The script will fail with a rate limit error if this happens.
 
+### Slack Integration Issues
+
+**"Failed to post to Slack"**
+- Verify your Slack webhook URL is correct
+- Ensure the webhook is still active (they can be revoked)
+- Check that your Slack app has permission to post to the selected channel
+- Try posting a test message manually: `curl -X POST -H 'Content-Type: application/json' -d '{"text":"Test"}' YOUR_WEBHOOK_URL`
+
+**GitHub Action not posting to Slack**
+- Verify `SLACK_WEBHOOK_URL` secret is set in your repository
+- Check the Actions logs for error messages
+- Ensure `config.json` is committed to the repository
+- Verify `GH_TOKEN` secret is set and has `repo` and `read:org` permissions
+- Verify that jq is installed (it's pre-installed on ubuntu-latest runners)
+
 ## Development
 
 ### Project Structure
 
 ```
 .
-├── index.ts           # Main entry point
-├── types.ts           # TypeScript type definitions
-├── utils.ts           # Utility functions (date calc, stats)
-├── github.ts          # GitHub API integration
-├── metrics.ts         # Metrics calculation
-├── output.ts          # Output generation (CSV, console)
-├── config.example.json # Example configuration
-├── package.json       # Project dependencies
-└── README.md          # This file
+├── index.ts                           # Main entry point
+├── types.ts                           # TypeScript type definitions
+├── utils.ts                           # Utility functions (date calc, stats)
+├── github.ts                          # GitHub API integration
+├── metrics.ts                         # Metrics calculation
+├── output.ts                          # Output generation (CSV, console)
+├── slack.ts                           # Slack integration
+├── package.json                       # Project dependencies
+├── .github/
+│   └── workflows/
+│       ├── slack-report.yml           # GitHub Action for Slack reporting
+│       └── README.md                  # GitHub Actions setup guide
+└── README.md                          # This file
 ```
 
 ### Running Tests
 
 ```bash
 # Dry run with example data
-bun run index.ts --start-date 2024-01-01 --end-date 2024-01-07
+GH_TOKEN="your_github_token" bun run index.ts --start-date 2024-01-01 --end-date 2024-01-07
 ```
 
 ## License

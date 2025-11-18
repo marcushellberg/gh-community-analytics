@@ -1,0 +1,65 @@
+name: Weekly Slack Report
+
+on:
+  # Run every Monday at 9 AM UTC
+  schedule:
+    - cron: '0 9 * * 1'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD)'
+        required: false
+        type: string
+      end_date:
+        description: 'End date (YYYY-MM-DD)'
+        required: false
+        type: string
+      full_report:
+        description: 'Post full report (includes metrics and weekly summary)'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  post-to-slack:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      
+      - name: Install dependencies
+        run: bun install
+      
+      - name: Run analytics and post to Slack
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_POST_FULL_REPORT: ${{ github.event.inputs.full_report || 'false' }}
+        run: |
+          # Build the command with optional date parameters
+          CMD="bun run index.ts"
+          
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            CMD="$CMD --start-date ${{ github.event.inputs.start_date }}"
+          fi
+          
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            CMD="$CMD --end-date ${{ github.event.inputs.end_date }}"
+          fi
+          
+          echo "Running: $CMD"
+          $CMD
+

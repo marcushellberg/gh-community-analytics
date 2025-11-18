@@ -4,6 +4,7 @@ import type { Config } from './types.ts';
 import { GitHubAnalytics } from './github.ts';
 import { calculateOverallMetrics, calculateWeeklySummary } from './metrics.ts';
 import { displayConsoleOutput, saveCSV, displaySummary } from './output.ts';
+import { postWeeklySummaryToSlack, postFullReportToSlack } from './slack.ts';
 
 async function main() {
   try {
@@ -18,17 +19,28 @@ async function main() {
     
     if (!(await configFile.exists())) {
       console.error(`❌ Error: Configuration file not found at ${configPath}`);
-      console.error('Please create a config.json file based on config.example.json');
+      console.error('Please create a config.json file with organization, repositories, excludeTeams, and excludeBots');
       process.exit(1);
     }
 
     const config: Config = await configFile.json();
 
-    // Validate configuration
-    if (!config.githubToken || !config.organization || !config.repositories || config.repositories.length === 0) {
-      console.error('❌ Error: Invalid configuration. Please ensure githubToken, organization, and repositories are set.');
+    // Get GitHub token from environment variable or config
+    const githubToken = process.env.GH_TOKEN || config.githubToken;
+    
+    if (!githubToken) {
+      console.error('❌ Error: GitHub token not found. Set GH_TOKEN environment variable or include githubToken in config.json');
       process.exit(1);
     }
+
+    // Validate configuration
+    if (!config.organization || !config.repositories || config.repositories.length === 0) {
+      console.error('❌ Error: Invalid configuration. Please ensure organization and repositories are set.');
+      process.exit(1);
+    }
+    
+    // Add token to config for downstream use
+    config.githubToken = githubToken;
 
     // Set default values
     const excludeTeams = config.excludeTeams || [];
@@ -80,6 +92,26 @@ async function main() {
     // Save CSV
     const csvPath = await saveCSV(data);
     displaySummary(csvPath);
+
+    // Post to Slack if webhook URL is provided
+    const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (slackWebhookUrl) {
+      console.log('📤 Posting report to Slack...');
+      try {
+        // Check if we should post just the summary or full report
+        const postFullReport = process.env.SLACK_POST_FULL_REPORT === 'true';
+        
+        if (postFullReport) {
+          await postFullReportToSlack(slackWebhookUrl, metrics, weeklySummary, startDate, endDate);
+        } else {
+          await postWeeklySummaryToSlack(slackWebhookUrl, weeklySummary, startDate, endDate);
+        }
+        
+        console.log('✅ Successfully posted to Slack!\n');
+      } catch (error: any) {
+        console.error(`❌ Failed to post to Slack: ${error.message}\n`);
+      }
+    }
 
     // Check rate limit after completion
     await analytics.checkRateLimit();

@@ -1,0 +1,28 @@
+{
+  "organization": "vaadin",
+  "repositories": [
+    "platform",
+    "flow",
+    "hilla",
+    "flow-components",
+    "web-components",
+    "cdi",
+    "quarkus",
+    "docs",
+    "copilot",
+    "start",
+    "testbench"
+  ],
+  "excludeTeams": [
+    "engineering",
+    "flow",
+    "hilla-team",
+    "vaadin-components-team",
+    "copilot"
+  ],
+  "excludeBots": [
+    "vaadin-bot",
+    "dependabot[bot]"
+  ]
+}
+

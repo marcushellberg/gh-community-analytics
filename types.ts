@@ -1,5 +1,5 @@
 export interface Config {
-  githubToken: string;
+  githubToken?: string;  // Optional - can be provided via GH_TOKEN env var
   organization: string;
   repositories: string[];
   excludeTeams: string[];
