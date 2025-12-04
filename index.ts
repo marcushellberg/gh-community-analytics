@@ -4,7 +4,7 @@ import type { Config } from './types.ts';
 import { GitHubAnalytics } from './github.ts';
 import { calculateOverallMetrics, calculateWeeklySummary } from './metrics.ts';
 import { displayConsoleOutput, saveCSV, displaySummary } from './output.ts';
-import { postWeeklySummaryToSlack, postFullReportToSlack } from './slack.ts';
+import { postWeeklySummaryToSlack, postFullReportToSlack, postFullReportWithFileToSlack } from './slack.ts';
 
 async function main() {
   try {
@@ -93,12 +93,32 @@ async function main() {
     const csvPath = await saveCSV(data);
     displaySummary(csvPath);
 
-    // Post to Slack if webhook URL is provided
+    // Post to Slack if credentials are provided
+    const slackBotToken = process.env.SLACK_BOT_TOKEN;
+    const slackChannelId = process.env.SLACK_CHANNEL_ID;
     const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
-    if (slackWebhookUrl) {
+    
+    // Prefer Bot Token + Channel ID (supports file uploads in threads)
+    if (slackBotToken && slackChannelId) {
+      console.log('📤 Posting report to Slack with CSV attachment...');
+      try {
+        await postFullReportWithFileToSlack(
+          slackBotToken,
+          slackChannelId,
+          metrics,
+          weeklySummary,
+          startDate,
+          endDate,
+          csvPath
+        );
+        console.log('✅ Successfully posted to Slack with CSV file!\n');
+      } catch (error: any) {
+        console.error(`❌ Failed to post to Slack: ${error.message}\n`);
+      }
+    } else if (slackWebhookUrl) {
+      // Fallback to webhook (no file upload support)
       console.log('📤 Posting report to Slack...');
       try {
-        // Check if we should post just the summary or full report
         const postFullReport = process.env.SLACK_POST_FULL_REPORT === 'true';
         
         if (postFullReport) {
@@ -163,6 +183,20 @@ Configuration:
 
   Get a GitHub token from: https://github.com/settings/tokens
   Token needs 'repo' and 'read:org' permissions.
+
+Environment Variables:
+  GH_TOKEN                   GitHub personal access token (alternative to config)
+  
+  Slack Integration (Bot Token - recommended, supports file uploads):
+    SLACK_BOT_TOKEN          Slack Bot OAuth token (xoxb-...)
+    SLACK_CHANNEL_ID         Slack channel ID (e.g., C01234567)
+  
+  Slack Integration (Webhook - legacy, no file upload support):
+    SLACK_WEBHOOK_URL        Slack incoming webhook URL
+    SLACK_POST_FULL_REPORT   Set to 'true' to post full report (default: weekly summary only)
+
+  Note: Bot token requires 'chat:write' and 'files:write' scopes.
+        Create a Slack app at https://api.slack.com/apps
 `);
   process.exit(0);
 }
