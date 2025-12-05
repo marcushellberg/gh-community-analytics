@@ -4,7 +4,7 @@ import type { Config } from './types.ts';
 import { GitHubAnalytics } from './github.ts';
 import { calculateOverallMetrics, calculateWeeklySummary } from './metrics.ts';
 import { displayConsoleOutput, saveCSV, displaySummary } from './output.ts';
-import { postWeeklySummaryToSlack, postFullReportToSlack, postFullReportWithFileToSlack } from './slack.ts';
+import { postWeeklySummaryToSlack, postFullReportToSlack, postWeeklySummaryWithFileToSlack } from './slack.ts';
 
 async function main() {
   try {
@@ -102,14 +102,13 @@ async function main() {
     if (slackBotToken && slackChannelId) {
       console.log('📤 Posting report to Slack with CSV attachment...');
       try {
-        await postFullReportWithFileToSlack(
+        await postWeeklySummaryWithFileToSlack(
           slackBotToken,
           slackChannelId,
-          metrics,
           weeklySummary,
+          data,
           startDate,
-          endDate,
-          csvPath
+          endDate
         );
         console.log('✅ Successfully posted to Slack with CSV file!\n');
       } catch (error: any) {

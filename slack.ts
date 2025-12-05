@@ -1,5 +1,6 @@
-import type { OverallMetrics, WeeklySummary } from './types.ts';
+import type { IssueData, OverallMetrics, WeeklySummary } from './types.ts';
 import { formatDate } from './utils.ts';
+import { generateCSV } from './output.ts';
 
 interface SlackMessageResponse {
   ok: boolean;
@@ -140,13 +141,11 @@ export async function postMessageToSlack(
 export async function uploadFileToSlack(
   botToken: string,
   channel: string,
-  filePath: string,
+  fileContent: string,
+  fileName: string,
   threadTs: string,
   initialComment?: string
 ): Promise<void> {
-  const file = Bun.file(filePath);
-  const fileContent = await file.text();
-  const fileName = filePath.split('/').pop() || 'response-times.csv';
   const fileSize = new TextEncoder().encode(fileContent).length;
   
   // Step 1: Get upload URL from Slack
@@ -235,34 +234,43 @@ export async function postFullReportToSlack(
 }
 
 /**
- * Post full report to Slack with CSV file attachment using Web API
+ * Post weekly summary to Slack with CSV file attachment using Web API
  * Requires SLACK_BOT_TOKEN and SLACK_CHANNEL_ID environment variables
+ * 
+ * The CSV attachment only includes issues/PRs that didn't respond within 1 business day
  */
-export async function postFullReportWithFileToSlack(
+export async function postWeeklySummaryWithFileToSlack(
   botToken: string,
   channel: string,
-  metrics: OverallMetrics,
   weeklySummary: WeeklySummary[],
+  data: IssueData[],
   startDate: Date,
-  endDate: Date,
-  csvPath: string
+  endDate: Date
 ): Promise<void> {
   const dateRange = `*GitHub Response Time Analysis*\n_${formatDate(startDate)} to ${formatDate(endDate)}_\n\n`;
-  const metricsText = formatOverallMetricsForSlack(metrics);
   const summaryText = formatWeeklySummaryForSlack(weeklySummary, startDate, endDate);
   
-  const fullMessage = dateRange + metricsText + '\n\n' + summaryText;
+  const message = dateRange + summaryText;
   
   // Post the main message and get the thread timestamp
-  const threadTs = await postMessageToSlack(botToken, channel, fullMessage);
+  const threadTs = await postMessageToSlack(botToken, channel, message);
   
-  // Upload the CSV file as a thread reply
-  await uploadFileToSlack(
-    botToken,
-    channel,
-    csvPath,
-    threadTs,
-    '📎 Detailed response times data'
-  );
+  // Filter to only include items that didn't respond within 1 business day
+  const missedItems = data.filter(item => !item.respondedWithinOneDay);
+  
+  if (missedItems.length > 0) {
+    // Generate CSV for missed items only
+    const csvContent = generateCSV(missedItems);
+    
+    // Upload the CSV file as a thread reply
+    await uploadFileToSlack(
+      botToken,
+      channel,
+      csvContent,
+      'missed-response-times.csv',
+      threadTs,
+      `📎 ${missedItems.length} issues/PRs that didn't get a response within 1 business day`
+    );
+  }
 }
 
