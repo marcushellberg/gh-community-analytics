@@ -22,7 +22,8 @@
   ],
   "excludeBots": [
     "vaadin-bot",
-    "dependabot[bot]"
+    "dependabot[bot]",
+    "Copilot"
   ]
 }
 

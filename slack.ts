@@ -237,7 +237,7 @@ export async function postFullReportToSlack(
  * Post weekly summary to Slack with CSV file attachment using Web API
  * Requires SLACK_BOT_TOKEN and SLACK_CHANNEL_ID environment variables
  * 
- * The CSV attachment only includes issues/PRs that didn't respond within 1 business day
+ * The CSV attachment only includes issues/PRs from the last week that didn't respond within 1 business day
  */
 export async function postWeeklySummaryWithFileToSlack(
   botToken: string,
@@ -255,12 +255,21 @@ export async function postWeeklySummaryWithFileToSlack(
   // Post the main message and get the thread timestamp
   const threadTs = await postMessageToSlack(botToken, channel, message);
   
-  // Filter to only include items that didn't respond within 1 business day
-  const missedItems = data.filter(item => !item.respondedWithinOneDay);
+  // Find the most recent week from the data
+  const lastWeekStart = data.reduce((latest, item) => {
+    return item.weekStarting > latest ? item.weekStarting : latest;
+  }, new Date(0));
+  
+  // Filter to only include items from the last week that didn't respond within 1 business day
+  const missedItems = data.filter(item => 
+    !item.respondedWithinOneDay && 
+    item.weekStarting.getTime() === lastWeekStart.getTime()
+  );
   
   if (missedItems.length > 0) {
     // Generate CSV for missed items only
     const csvContent = generateCSV(missedItems);
+    const weekLabel = formatDate(lastWeekStart);
     
     // Upload the CSV file as a thread reply
     await uploadFileToSlack(
@@ -269,7 +278,7 @@ export async function postWeeklySummaryWithFileToSlack(
       csvContent,
       'missed-response-times.csv',
       threadTs,
-      `📎 ${missedItems.length} issues/PRs that didn't get a response within 1 business day`
+      `📎 ${missedItems.length} issues/PRs from week of ${weekLabel} that didn't get a response within 1 business day`
     );
   }
 }
