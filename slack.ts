@@ -8,9 +8,16 @@ interface SlackMessageResponse {
   error?: string;
 }
 
-interface SlackFileResponse {
+interface SlackUploadUrlResponse {
   ok: boolean;
-  file?: { id: string };
+  upload_url?: string;
+  file_id?: string;
+  error?: string;
+}
+
+interface SlackCompleteUploadResponse {
+  ok: boolean;
+  files?: Array<{ id: string }>;
   error?: string;
 }
 
@@ -125,7 +132,10 @@ export async function postMessageToSlack(
 }
 
 /**
- * Upload a file to Slack as a thread reply
+ * Upload a file to Slack as a thread reply using the new async upload flow
+ * (files.getUploadURLExternal + files.completeUploadExternal)
+ * 
+ * Note: files.upload was deprecated and disabled on November 12, 2025
  */
 export async function uploadFileToSlack(
   botToken: string,
@@ -137,29 +147,59 @@ export async function uploadFileToSlack(
   const file = Bun.file(filePath);
   const fileContent = await file.text();
   const fileName = filePath.split('/').pop() || 'response-times.csv';
+  const fileSize = new TextEncoder().encode(fileContent).length;
   
-  const formData = new FormData();
-  formData.append('channels', channel);
-  formData.append('thread_ts', threadTs);
-  formData.append('filename', fileName);
-  formData.append('filetype', 'csv');
-  formData.append('content', fileContent);
-  if (initialComment) {
-    formData.append('initial_comment', initialComment);
-  }
-
-  const response = await fetch('https://slack.com/api/files.upload', {
+  // Step 1: Get upload URL from Slack
+  const uploadUrlResponse = await fetch('https://slack.com/api/files.getUploadURLExternal', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${botToken}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: formData,
+    body: new URLSearchParams({
+      filename: fileName,
+      length: fileSize.toString(),
+    }),
   });
 
-  const data = await response.json() as SlackFileResponse;
+  const uploadUrlData = await uploadUrlResponse.json() as SlackUploadUrlResponse;
   
-  if (!data.ok) {
-    throw new Error(`Failed to upload file to Slack: ${data.error}`);
+  if (!uploadUrlData.ok || !uploadUrlData.upload_url || !uploadUrlData.file_id) {
+    throw new Error(`Failed to get Slack upload URL: ${uploadUrlData.error}`);
+  }
+
+  // Step 2: Upload file content to the provided URL
+  const uploadResponse = await fetch(uploadUrlData.upload_url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/csv',
+    },
+    body: fileContent,
+  });
+
+  if (!uploadResponse.ok) {
+    throw new Error(`Failed to upload file content: ${uploadResponse.status} ${uploadResponse.statusText}`);
+  }
+
+  // Step 3: Complete the upload and share to channel/thread
+  const completeResponse = await fetch('https://slack.com/api/files.completeUploadExternal', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${botToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      files: [{ id: uploadUrlData.file_id, title: fileName }],
+      channel_id: channel,
+      thread_ts: threadTs,
+      initial_comment: initialComment,
+    }),
+  });
+
+  const completeData = await completeResponse.json() as SlackCompleteUploadResponse;
+  
+  if (!completeData.ok) {
+    throw new Error(`Failed to complete Slack file upload: ${completeData.error}`);
   }
 }
 
