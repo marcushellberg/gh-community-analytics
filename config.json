@@ -15,10 +15,7 @@
   ],
   "excludeTeams": [
     "engineering",
-    "flow",
-    "hilla-team",
-    "vaadin-components-team",
-    "copilot"
+    "product-management"
   ],
   "excludeBots": [
     "vaadin-bot",
