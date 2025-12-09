@@ -207,6 +207,20 @@ export class GitHubAnalytics {
           'issue'
         );
 
+        // If no org member responded and the issue is closed, check if the author closed it themselves
+        // In that case, omit the issue since there was no opportunity for our team to respond
+        if (!firstResponse && issue.state === 'closed') {
+          const issueDetails = await this.octokit.issues.get({
+            owner: this.organization,
+            repo: repo,
+            issue_number: issue.number,
+          });
+          
+          if (issueDetails.data.closed_by?.login === author) {
+            continue;
+          }
+        }
+
         const responseTimeHours = firstResponse
           ? calculateWorkingHours(createdAt, firstResponse.respondedAt)
           : null;
